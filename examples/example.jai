@@ -4,8 +4,8 @@
 #import "Basic";
 #import "Windows";
 #import "dxgi";
-#import "d3d12"()(INCLUDE_DEBUG_BINDINGS = true);
 #import "d3d_compiler";
+#load "../dxheaders_bindings.jai";
 
 Window :: #import "Window_Creation";
 Input  :: #import "Input";
@@ -249,6 +249,37 @@ d3d12_queue     : *ID3D12CommandQueue;
 d3d12_info_queue: *ID3D12InfoQueue;
 d3d12_queue_wi_fence: *ID3D12Fence;
 d3d12_queue_wi_event: *void;
+d3d12_capabilities  : D3D12_CAPABILITIES;
+
+D3D12_CAPABILITIES :: struct {
+    hardware_ray_tracing_supported:         bool;
+    inline_ray_tracing_supported:           bool;
+    variable_rate_shading_supported:        bool;
+    variable_rate_shading_image_supported:  bool;
+    mesh_shaders_supported:                 bool;
+    work_graphs_supported:                  bool;
+    shader_model:                           SHADER_MODEL;
+    enhanced_barriers_supported:            bool;
+    typed_uav_additional_formats_supported: bool;
+    shading_rate_image_tile_size:           u32;
+    additional_shading_rates_supported:     bool;
+}
+
+SHADER_MODEL :: enum {
+    SM_UNKNOWN;
+    SM_5_1;
+    SM_6_0;
+    SM_6_1;
+    SM_6_2;
+    SM_6_3;
+    SM_6_4;
+    SM_6_5;
+    SM_6_6;
+    SM_6_7;
+    SM_6_8;
+    SM_6_9;
+    SM_6_10;
+}
 
 init_device :: () -> bool {
     log("init_device...");
@@ -258,6 +289,60 @@ init_device :: () -> bool {
         #if ASSERT_ON_FAIL assert(false, "D3D12CreateDevice failed.");
         deinit_device();
         return false;
+    }
+
+    // Capabilities
+    {
+        options  : D3D12_FEATURE_DATA_D3D12_OPTIONS;
+        options5 : D3D12_FEATURE_DATA_D3D12_OPTIONS5;
+        options6 : D3D12_FEATURE_DATA_D3D12_OPTIONS6;
+        options7 : D3D12_FEATURE_DATA_D3D12_OPTIONS7;
+        options12: D3D12_FEATURE_DATA_D3D12_OPTIONS12;
+        options21: D3D12_FEATURE_DATA_D3D12_OPTIONS21;
+        ID3D12Device_CheckFeatureSupport(d3d12_device, .D3D12_FEATURE_D3D12_OPTIONS,   *options,   size_of(type_of(options)));
+        ID3D12Device_CheckFeatureSupport(d3d12_device, .D3D12_FEATURE_D3D12_OPTIONS5,  *options5,  size_of(type_of(options5)));
+        ID3D12Device_CheckFeatureSupport(d3d12_device, .D3D12_FEATURE_D3D12_OPTIONS6,  *options6,  size_of(type_of(options6)));
+        ID3D12Device_CheckFeatureSupport(d3d12_device, .D3D12_FEATURE_D3D12_OPTIONS7,  *options7,  size_of(type_of(options7)));
+        ID3D12Device_CheckFeatureSupport(d3d12_device, .D3D12_FEATURE_D3D12_OPTIONS12, *options12, size_of(type_of(options12)));
+        ID3D12Device_CheckFeatureSupport(d3d12_device, .D3D12_FEATURE_D3D12_OPTIONS21, *options21, size_of(type_of(options21)));
+
+        shader_model_data := D3D12_FEATURE_DATA_SHADER_MODEL.{.D3D_HIGHEST_SHADER_MODEL};
+        while FAILED(ID3D12Device_CheckFeatureSupport(d3d12_device, .D3D12_FEATURE_SHADER_MODEL, *shader_model_data, size_of(type_of(shader_model_data)))) && shader_model_data.HighestShaderModel > .D3D_SHADER_MODEL_5_1 {
+            shader_model_data.HighestShaderModel -= 1;
+        }
+
+        using d3d12_capabilities;
+        hardware_ray_tracing_supported         = options5.RaytracingTier >= .D3D12_RAYTRACING_TIER_1_0;
+        inline_ray_tracing_supported           = options5.RaytracingTier >= .D3D12_RAYTRACING_TIER_1_1;
+        variable_rate_shading_supported        = options6.VariableShadingRateTier >= .D3D12_VARIABLE_SHADING_RATE_TIER_1;
+        variable_rate_shading_image_supported  = options6.VariableShadingRateTier >= .D3D12_VARIABLE_SHADING_RATE_TIER_2;
+        mesh_shaders_supported                 = options7.MeshShaderTier >= .D3D12_MESH_SHADER_TIER_1;
+        work_graphs_supported                  = options21.WorkGraphsTier >= .D3D12_WORK_GRAPHS_TIER_1_0;
+        enhanced_barriers_supported            = options12.EnhancedBarriersSupported == .TRUE;
+        typed_uav_additional_formats_supported = options.TypedUAVLoadAdditionalFormats == .TRUE;
+        shading_rate_image_tile_size           = options6.ShadingRateImageTileSize;
+        additional_shading_rates_supported     = options6.AdditionalShadingRatesSupported == .TRUE;
+
+        if shader_model_data.HighestShaderModel == {
+            case .D3D_SHADER_MODEL_5_1;  shader_model = .SM_5_1;
+            case .D3D_SHADER_MODEL_6_0;  shader_model = .SM_6_0;
+            case .D3D_SHADER_MODEL_6_1;  shader_model = .SM_6_1;
+            case .D3D_SHADER_MODEL_6_2;  shader_model = .SM_6_2;
+            case .D3D_SHADER_MODEL_6_3;  shader_model = .SM_6_3;
+            case .D3D_SHADER_MODEL_6_4;  shader_model = .SM_6_4;
+            case .D3D_SHADER_MODEL_6_5;  shader_model = .SM_6_5;
+            case .D3D_SHADER_MODEL_6_6;  shader_model = .SM_6_6;
+            case .D3D_SHADER_MODEL_6_7;  shader_model = .SM_6_7;
+            case .D3D_SHADER_MODEL_6_8;  shader_model = .SM_6_8;
+            case .D3D_SHADER_MODEL_6_9;  shader_model = .SM_6_9;
+            case .D3D_SHADER_MODEL_6_10; shader_model = .SM_6_10;
+        }
+
+        if shader_model < .SM_6_7 {
+            #if ASSERT_ON_FAIL assert(false, "Device doesn't support Shader Model 6.7.");
+            deinit_device();
+            return false;
+        }
     }
 
     #if DEBUG {
